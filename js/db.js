@@ -13,7 +13,7 @@ const DEMO_KEY = 'tmn-demo-v1';
 
 export async function init() {
   if (demo) return;
-  const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm');
+  const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm');
   sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'tmn-auth' },
   });
