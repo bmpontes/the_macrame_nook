@@ -1,5 +1,4 @@
 import * as db from './db.js';
-import { PESSOAS } from '../config.js';
 
 const { cache } = db;
 const $view = document.getElementById('view');
@@ -1015,9 +1014,7 @@ function viewDespesas() {
         const rows = cache.despesas.filter((d) => noPeriodo(d.data, p) && (!qq || norm(d.descricao).includes(qq)))
           .sort((a, b) => (b.data > a.data ? 1 : b.data < a.data ? -1 : b.id - a.id));
         const total = rows.reduce((s, d) => s + num(d.total), 0);
-        const porPessoa = PESSOAS.map((n) => [n, rows.filter((d) => d.pago_por === n).reduce((s, d) => s + num(d.total), 0)]);
-        root.querySelector('#tot').innerHTML = `<div class="kpis"><div class="kpi wide"><span>Total · ${esc(p.label)}</span><b>${eur(total)}</b></div>
-          ${porPessoa.map(([n, v]) => `<div class="kpi"><span>Pago por ${esc(n)}</span><b>${eur(v)}</b></div>`).join('')}</div>`;
+        root.querySelector('#tot').innerHTML = `<div class="kpis"><div class="kpi wide"><span>Total · ${esc(p.label)}</span><b>${eur(total)}</b></div></div>`;
         const groups = new Map();
         for (const d of rows) { const k = d.data.slice(0, 7); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(d); }
         root.querySelector('#lista').innerHTML = [...groups].map(([k, ds]) => `
@@ -1025,7 +1022,7 @@ function viewDespesas() {
           <div class="list">${ds.map((d) => `
             <button class="item" data-href="#/despesa/${d.id}">
               <span class="item-main">${esc(d.descricao || 'Sem descrição')}</span><span class="item-right">${eur(d.total)}</span>
-              <span class="item-sub">${fmtDate(d.data)}${d.pago_por ? ' · ' + esc(d.pago_por) : ''}</span>
+              <span class="item-sub">${fmtDate(d.data)}</span>
             </button>`).join('')}</div>`).join('') || empty('Sem despesas neste período');
         bindCommon();
       };
@@ -1038,7 +1035,7 @@ function viewDespesas() {
 
 function viewDespesa(id) {
   const isNew = id === 'nova';
-  const d = isNew ? { data: today(), descricao: '', total: 0, pago_por: null } : byId('despesas', id);
+  const d = isNew ? { data: today(), descricao: '', total: 0 } : byId('despesas', id);
   if (!d) return notFound('#/despesas');
   return {
     html: screen({
@@ -1051,18 +1048,14 @@ function viewDespesa(id) {
             ${field('Descrição', `<input type="text" name="descricao" value="${esc(d.descricao)}" placeholder="Loja e material" autocomplete="off">`)}
             ${field('Total (€)', `<input type="text" inputmode="decimal" name="total" value="${isNew ? '' : fmt2(d.total)}" placeholder="0,00">`)}
           </div>
-          <h2 class="section">Pago por</h2>
-          ${segmented('pp', [['', '—'], ...PESSOAS.map((n) => [n, n])], d.pago_por ?? '')}
           ${isNew ? '' : `<button type="button" class="btn danger" id="apagar">Apagar despesa</button>`}
         </form>`,
     }),
     bind(root) {
-      let pagoPor = d.pago_por ?? '';
-      bindSeg(root, 'pp', (v) => { pagoPor = v; });
       root.querySelector('#guardar').addEventListener('click', async () => {
         const f = formData(root.querySelector('#f'));
         if (!num(f.total)) return toast('Indique o valor.', true);
-        await run(() => db.save('despesas', { ...(isNew ? {} : { id: d.id }), data: f.data || today(), descricao: f.descricao.trim() || null, total: num(f.total), pago_por: pagoPor || null }), 'Despesa guardada');
+        await run(() => db.save('despesas', { ...(isNew ? {} : { id: d.id }), data: f.data || today(), descricao: f.descricao.trim() || null, total: num(f.total) }), 'Despesa guardada');
         if (stack.length > 1) history.back(); else go('#/despesas');
       });
       root.querySelector('#apagar')?.addEventListener('click', async () => {

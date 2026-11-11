@@ -281,8 +281,8 @@ function demoSeed() {
       { id: 4, encomenda_id: 3, produto_id: 4, preco_unit: 5, quantidade: 3, descricao: 'Nomes: Rita, Tomás, Leonor', executado: false },
     ],
     despesas: [
-      { id: 1, data: d(1, 5), descricao: 'Fio de algodão 3mm', total: 24.5, pago_por: 'Jéssica' },
-      { id: 2, data: d(1, 18), descricao: 'Argolas de madeira', total: 8.9, pago_por: 'Bernardo' },
+      { id: 1, data: d(1, 5), descricao: 'Fio de algodão 3mm', total: 24.5 },
+      { id: 2, data: d(1, 18), descricao: 'Argolas de madeira', total: 8.9 },
     ],
     produto_fotos: [],
     produto_materiais: [],
