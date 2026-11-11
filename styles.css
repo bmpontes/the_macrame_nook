@@ -326,3 +326,56 @@ img[data-foto].loaded { opacity: 1; }
 .banner.warn { background: color-mix(in srgb, var(--warn) 14%, var(--card)); }
 .link-btn { border: 0; background: none; color: var(--accent); font-weight: 600; padding: 4px 0 0; display: block; font-size: 15px; }
 .item.total .item-main, .item.total .item-right { font-weight: 700; color: var(--ink); }
+
+/* ---------- Listas em cartões separados ----------
+   Cada linha é um cartão próprio, com espaço entre eles.
+   Exceções: formulários (.form), gráficos (.bars) e blocos de definições (.plain). */
+.list:not(.form):not(.bars):not(.plain) {
+  background: none; box-shadow: none; border-radius: 0; overflow: visible;
+  display: grid; gap: 8px;
+}
+.list:not(.form):not(.bars):not(.plain) > .item {
+  background: var(--card); border: 0.5px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 14px 16px; min-height: 56px;
+  transition: transform 0.12s, background 0.12s;
+}
+.list:not(.form):not(.bars):not(.plain) > button.item:active { transform: scale(0.985); }
+.list:not(.form):not(.bars):not(.plain) > .empty {
+  background: var(--card); border: 0.5px dashed var(--line); border-radius: var(--radius);
+}
+.item-main { font-weight: 600; font-size: 16px; }
+.item-sub { font-size: 13.5px; margin-top: 1px; }
+.item-right { color: var(--ink); font-weight: 600; }
+.item-right:only-of-type { font-variant-numeric: tabular-nums; }
+.item.total { background: var(--accent-soft) !important; border-color: transparent !important; box-shadow: none !important; }
+.chips { margin-top: 8px; }
+
+/* ---------- Totais das encomendas ---------- */
+.summary { display: flex; justify-content: space-between; align-items: baseline; margin: 2px 4px 12px; color: var(--muted); font-size: 15px; }
+.summary b { color: var(--ink); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.item-right.amount { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+
+/* ---------- Título grande com botão na mesma linha ---------- */
+.content.no-bar { padding-top: calc(env(safe-area-inset-top) + 18px); }
+.title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 16px; }
+.title-row h1.large { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-btn.add {
+  flex: none; gap: 4px; padding: 8px 14px 8px 10px; border-radius: 99px;
+  background: var(--accent); color: var(--accent-ink); font-size: 15px; font-weight: 600;
+}
+.bar-btn.add svg { width: 18px; height: 18px; stroke-width: 2.4; }
+.bar-btn.add:active { transform: scale(0.96); }
+.title-row.center { justify-content: center; }
+.title-row.center h1.large { text-align: center; white-space: normal; }
+
+/* ---------- Valor + quantidade empilhados à direita (lista de produtos) ---------- */
+.item-right.stack { grid-row: span 2; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 1px; }
+.item-right.stack .amount { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.item-right.stack small { font-size: 13px; font-weight: 500; color: var(--muted); }
+.item.with-thumb.has-stack .item-sub { grid-column: 2 / 3; }
+
+/* ---------- Formulário em folha (ex.: novo cliente) ---------- */
+.sheet.auto { height: auto; max-height: 88vh; }
+.sheet-body { padding: 4px 16px 16px; overflow-y: auto; }
+.sheet-body .list { margin-bottom: 8px; }
+.sheet-head .link.strong { font-weight: 600; justify-self: end; }

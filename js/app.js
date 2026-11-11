@@ -141,15 +141,18 @@ function periodo(key) {
 const noPeriodo = (data, p) => data >= p.de && data <= p.ate;
 
 // ================= Componentes =================
-function screen({ title, back, right = '', body, large = !back }) {
-  return `
+function screen({ title, back, right = '', body, large = !back, center = false }) {
+  // Ecrãs com título grande: o botão de ação fica na mesma linha do título.
+  // A barra de cima só aparece quando há "Voltar" ou o título é pequeno.
+  const bar = (!large || back) ? `
     <header class="bar${large ? ' bar-large' : ''}">
       <div class="bar-side">${back ? `<button class="bar-btn" data-back="${esc(back)}"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>Voltar</button>` : ''}</div>
       <div class="bar-title">${large ? '' : esc(title)}</div>
-      <div class="bar-side right">${right}</div>
-    </header>
-    <main class="content">
-      ${large ? `<h1 class="large">${esc(title)}</h1>` : ''}
+      <div class="bar-side right">${large ? '' : right}</div>
+    </header>` : '';
+  return `${bar}
+    <main class="content${bar ? '' : ' no-bar'}">
+      ${large ? `<div class="title-row${center ? ' center' : ''}"><h1 class="large">${esc(title)}</h1>${right}</div>` : ''}
       ${body}
     </main>`;
 }
@@ -166,8 +169,48 @@ const empty = (msg) => `<div class="empty">${esc(msg)}</div>`;
 const field = (label, input) => `<label class="field"><span>${esc(label)}</span>${input}</label>`;
 const toggle = (label, name, on) => `<label class="row toggle"><span>${esc(label)}</span><input type="checkbox" class="switch" name="${name}" ${on ? 'checked' : ''}></label>`;
 
+/** Pequeno formulário numa folha que sobe de baixo. Devolve { campo: valor } ou null se cancelar. */
+function formSheet({ title, fields, required = [], submit = 'Guardar' }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'sheet-wrap';
+    wrap.innerHTML = `
+      <div class="sheet auto" role="dialog" aria-label="${esc(title)}">
+        <div class="sheet-head"><button class="link" data-cancel>Cancelar</button><b>${esc(title)}</b><button class="link strong" data-ok>${esc(submit)}</button></div>
+        <form class="sheet-body" onsubmit="return false">
+          <div class="list form">${fields.map((f) => field(f.label, f.textarea
+            ? `<textarea name="${f.name}" rows="2">${esc(f.value ?? '')}</textarea>`
+            : `<input type="text" name="${f.name}" value="${esc(f.value ?? '')}" autocomplete="off">`)).join('')}</div>
+          <p class="error" data-err></p>
+        </form>
+      </div>`;
+    document.body.appendChild(wrap);
+    const form = wrap.querySelector('form');
+    const close = (v) => { wrap.remove(); resolve(v); };
+    const ok = () => {
+      const d = formData(form);
+      const falta = required.find((k) => !String(d[k] ?? '').trim());
+      if (falta) {
+        wrap.querySelector('[data-err]').textContent = `Preencha o campo “${fields.find((f) => f.name === falta).label}”.`;
+        form.querySelector(`[name="${falta}"]`).focus();
+        return;
+      }
+      close(d);
+    };
+    wrap.addEventListener('click', (ev) => {
+      if (ev.target === wrap || ev.target.closest('[data-cancel]')) return close(null);
+      if (ev.target.closest('[data-ok]')) ok();
+    });
+    form.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.tagName === 'INPUT') { ev.preventDefault(); ok(); } });
+    setTimeout(() => {
+      const first = fields.find((f) => !f.value) ?? fields[0];
+      form.querySelector(`[name="${first.name}"]`).focus();
+    }, 80);
+  });
+}
+
 /** Folha de escolha com pesquisa (clientes, produtos, materiais). */
-function pick({ title, items, allowNew = false }) {
+function pick({ title, items, allowNew = false, newLabel = '' }) {
   return new Promise((resolve) => {
     const wrap = document.createElement('div');
     wrap.className = 'sheet-wrap';
@@ -185,7 +228,10 @@ function pick({ title, items, allowNew = false }) {
       const q = norm(input.value.trim());
       const found = items.filter((i) => !q || norm(i.label + ' ' + (i.sub ?? '')).includes(q)).slice(0, 150);
       list.innerHTML =
-        (allowNew && q ? `<button class="item add" data-new><span class="item-main">+ Criar “${esc(input.value.trim())}”</span></button>` : '') +
+        // Com newLabel o botão de criar aparece sempre no topo; sem ele, só depois de escrever.
+        (allowNew && (q || newLabel)
+          ? `<button class="item add" data-new><span class="item-main">+ ${q ? `Criar “${esc(input.value.trim())}”` : esc(newLabel)}</span></button>`
+          : '') +
         found.map((i) => `<button class="item${'foto' in i ? ' with-thumb' : ''}" data-id="${i.id}">${'foto' in i ? fotoTag(i.foto, 'thumb', 'thumb', i.label) : ''}<span class="item-main">${esc(i.label)}</span>${i.sub ? `<span class="item-sub">${esc(i.sub)}</span>` : ''}</button>`).join('') +
         (!found.length && !(allowNew && q) ? empty('Sem resultados') : '');
       hydrate(list);
@@ -209,13 +255,13 @@ const routes = [
   [/^\/inicio$/, viewInicio, 'inicio'],
   [/^\/encomendas$/, viewEncomendas, 'encomendas'],
   [/^\/encomenda\/(\w+)$/, viewEncomenda, 'encomendas'],
-  [/^\/clientes$/, viewClientes, 'clientes'],
-  [/^\/cliente\/(\w+)$/, viewCliente, 'clientes'],
+  [/^\/clientes$/, viewClientes, 'mais'],
+  [/^\/cliente\/(\w+)$/, viewCliente, 'mais'],
   [/^\/produtos$/, viewProdutos, 'produtos'],
   [/^\/produto\/(\w+)$/, viewProduto, 'produtos'],
   [/^\/mais$/, viewMais, 'mais'],
-  [/^\/despesas$/, viewDespesas, 'mais'],
-  [/^\/despesa\/(\w+)$/, viewDespesa, 'mais'],
+  [/^\/despesas$/, viewDespesas, 'despesas'],
+  [/^\/despesa\/(\w+)$/, viewDespesa, 'despesas'],
   [/^\/materiais$/, viewMateriais, 'mais'],
   [/^\/material\/(\w+)$/, viewMaterial, 'mais'],
   [/^\/calculadora$/, viewCalculadora, 'mais'],
@@ -277,19 +323,19 @@ const formData = (form) => {
 
 // ================= Início =================
 function viewInicio() {
-  const per = pref.get('periodo', 'ano');
+  const per = 'tudo'; // o Início abre sempre em "Sempre"
   return {
     html: screen({
       title: 'The Macrame Nook',
-      right: `<button class="bar-btn" data-href="#/encomenda/nova">+ Nova</button>`,
+      center: true,
       body: `
         ${db.demo ? `<div class="banner">Modo demonstração — dados fictícios guardados só neste dispositivo. Configure o Supabase em <code>config.js</code>.</div>` : ''}
-        ${segmented('periodo', [['ano', 'Este ano'], ['anterior', 'Ano passado'], ['tudo', 'Sempre']], per)}
+        ${segmented('periodo', [['tudo', 'Sempre'], ['ano', 'Este ano'], ['anterior', 'Ano passado']], per)}
         <div id="dash"></div>`,
     }),
     bind(root) {
       const draw = (key) => { root.querySelector('#dash').innerHTML = dashboard(key); bindCommon(); };
-      bindSeg(root, 'periodo', (v) => { pref.set('periodo', v); draw(v); });
+      bindSeg(root, 'periodo', (v) => draw(v));
       draw(per);
     },
   };
@@ -358,7 +404,7 @@ function encRow(e) {
   return `
     <button class="item" data-href="#/encomenda/${e.id}">
       <span class="item-main">${esc(clienteNome(e.cliente_id))}</span>
-      <span class="item-right">${eur(totalLinhas(ls))}</span>
+      <span class="item-right amount">${eur(totalLinhas(ls))}</span>
       <span class="item-sub">#${e.id} · ${fmtDate(e.data)} · ${n} ${n === 1 ? 'peça' : 'peças'}</span>
       <span class="chips">${chip(st.executado, 'Feito')}${chip(e.pago, 'Pago')}${chip(e.enviado, 'Enviado')}</span>
     </button>`;
@@ -378,11 +424,11 @@ function viewEncomendas(_, query) {
   return {
     html: screen({
       title: 'Encomendas',
-      right: `<button class="bar-btn" data-href="#/encomenda/nova">+ Nova</button>`,
+      right: `<button class="bar-btn add" data-href="#/encomenda/nova"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nova</button>`,
       body: `
         ${searchBox('', 'Cliente, nº ou descrição')}
         ${segmented('f', [['curso', 'Em curso'], ['pagar', 'Por pagar'], ['enviar', 'Por enviar'], ['concluidas', 'Concluídas'], ['todas', 'Todas']], f)}
-        <p class="hint" id="count"></p>
+        <div class="summary" id="count"></div>
         <div class="list" id="lista"></div>`,
     }),
     bind(root) {
@@ -392,7 +438,7 @@ function viewEncomendas(_, query) {
           norm(clienteNome(e.cliente_id)).includes(qq) || String(e.id) === qq.replace('#', '') ||
           norm(e.notas).includes(qq) || linhasDe(e.id).some((l) => norm(l.descricao).includes(qq) || norm(produtoNome(l.produto_id)).includes(qq)))
           .sort(sortEnc);
-        root.querySelector('#count').textContent = `${rows.length} ${rows.length === 1 ? 'encomenda' : 'encomendas'} · ${eur(rows.reduce((s, e) => s + totalEnc(e), 0))}`;
+        root.querySelector('#count').innerHTML = `<span>${rows.length} ${rows.length === 1 ? 'encomenda' : 'encomendas'}</span><b>${eur(rows.reduce((s, e) => s + totalEnc(e), 0))}</b>`;
         root.querySelector('#lista').innerHTML = rows.slice(0, 300).map(encRow).join('') || empty('Nenhuma encomenda');
         bindCommon();
       };
@@ -442,12 +488,23 @@ function viewEncomenda(id, query) {
 
       root.querySelector('#cliente').addEventListener('click', async () => {
         const r = await pick({
-          title: 'Cliente', allowNew: true,
+          title: 'Cliente', allowNew: true, newLabel: 'Novo cliente',
           items: [...cache.clientes].sort((a, b) => a.nome.localeCompare(b.nome, 'pt')).map((c) => ({ id: c.id, label: c.nome, sub: c.contacto })),
         });
         if (!r) return;
-        if (r.novo) {
-          const c = await run(() => db.save('clientes', { nome: r.novo }), 'Cliente criado');
+        if (r.novo !== undefined) {
+          // Ficha rápida do novo cliente (o nome escrito na pesquisa já vem preenchido).
+          const d = await formSheet({
+            title: 'Novo cliente',
+            fields: [
+              { name: 'nome', label: 'Nome', value: r.novo },
+              { name: 'morada', label: 'Morada', textarea: true },
+              { name: 'contacto', label: 'Contacto (telefone ou email)' },
+            ],
+            required: ['nome'],
+          });
+          if (!d) return;
+          const c = await run(() => db.save('clientes', { nome: d.nome.trim(), morada: d.morada.trim() || null, contacto: d.contacto.trim() || null }), 'Cliente criado');
           enc.cliente_id = c.id;
         } else enc.cliente_id = r.id;
         showCliente();
@@ -549,8 +606,8 @@ function viewClientes() {
   let q = '';
   return {
     html: screen({
-      title: 'Clientes',
-      right: `<button class="bar-btn" data-href="#/cliente/novo">+ Novo</button>`,
+      title: 'Clientes', back: '#/mais', large: true,
+      right: `<button class="bar-btn add" data-href="#/cliente/novo"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Novo</button>`,
       body: `${searchBox('', 'Nome, morada ou contacto')}<p class="hint" id="count"></p><div class="list" id="lista"></div>`,
     }),
     bind(root) {
@@ -650,7 +707,7 @@ function viewProdutos() {
   return {
     html: screen({
       title: 'Produtos',
-      right: `<button class="bar-btn" data-href="#/produto/novo">+ Novo</button>`,
+      right: `<button class="bar-btn add" data-href="#/produto/novo"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Novo</button>`,
       body: `
         ${searchBox('', 'Procurar produto')}
         ${segmented('modo', [['catalogo', 'Catálogo'], ['lista', 'Lista e custos']], modo)}
@@ -684,11 +741,11 @@ function viewProdutos() {
           box.className = 'list';
           box.innerHTML = rows.map((p) => {
             const margem = num(p.preco) - num(p.custo);
-            return `<button class="item with-thumb" data-href="#/produto/${p.id}">
+            return `<button class="item with-thumb has-stack" data-href="#/produto/${p.id}">
               ${fotoTag(fotoPrincipal(p.id), 'thumb', 'thumb', p.nome)}
               <span class="item-main">${esc(p.nome)}${p.ativo === false ? ' <span class="chip">inativo</span>' : ''}</span>
-              <span class="item-right">${eur(p.preco)}</span>
-              <span class="item-sub">custo ${eur(p.custo)} · margem ${eur(margem)} · ${vend.get(p.id)?.qt ?? 0} vendidos</span>
+              <span class="item-right stack"><b class="amount">${eur(vend.get(p.id)?.total ?? 0)}</b><small>${vend.get(p.id)?.qt ?? 0} ${(vend.get(p.id)?.qt ?? 0) === 1 ? 'vendido' : 'vendidos'}</small></span>
+              <span class="item-sub">preço ${eur(p.preco)} · custo ${eur(p.custo)} · margem ${eur(margem)}</span>
             </button>`;
           }).join('') || empty('Nenhum produto');
         }
@@ -876,13 +933,13 @@ function viewMais() {
       title: 'Mais',
       body: `
         <div class="list">
-          <button class="item" data-href="#/despesas"><span class="item-main">Despesas</span><span class="item-right">›</span></button>
+          <button class="item" data-href="#/clientes"><span class="item-main">Clientes</span><span class="item-right">›</span></button>
           <button class="item" data-href="#/relatorios"><span class="item-main">Relatórios</span><span class="item-right">›</span></button>
           <button class="item" data-href="#/calculadora"><span class="item-main">Calculadora de custo</span><span class="item-right">›</span></button>
           <button class="item" data-href="#/materiais"><span class="item-main">Materiais</span><span class="item-right">›</span></button>
         </div>
         <h2 class="section">Aspeto</h2>
-        <div class="list"><div class="setting"><span>Tema</span>
+        <div class="list plain"><div class="setting"><span>Tema</span>
           ${segmented('tema', [['auto', 'Automático'], ['claro', 'Claro'], ['escuro', 'Escuro']], pref.get('tema', 'auto'))}
         </div></div>
         <div class="list">
@@ -918,8 +975,8 @@ function viewDespesas() {
   let per = pref.get('periodoDesp', 'ano');
   return {
     html: screen({
-      title: 'Despesas', back: '#/mais',
-      right: `<button class="bar-btn" data-href="#/despesa/nova">+ Nova</button>`,
+      title: 'Despesas',
+      right: `<button class="bar-btn add" data-href="#/despesa/nova"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nova</button>`,
       body: `${searchBox('', 'Procurar despesa')}${segmented('p', [['ano', 'Este ano'], ['anterior', 'Ano passado'], ['tudo', 'Sempre']], per)}<div id="tot"></div><div id="lista"></div>`,
     }),
     bind(root) {
@@ -993,7 +1050,7 @@ function viewMateriais() {
   return {
     html: screen({
       title: 'Materiais', back: '#/mais',
-      right: `<button class="bar-btn" data-href="#/material/novo">+ Novo</button>`,
+      right: `<button class="bar-btn add" data-href="#/material/novo"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Novo</button>`,
       body: `${searchBox('', 'Procurar material')}<div class="list" id="lista"></div>`,
     }),
     bind(root) {

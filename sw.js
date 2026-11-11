@@ -1,5 +1,5 @@
 // Service worker: permite abrir a app rapidamente e mostra a última versão quando há rede.
-const CACHE = 'tmn-v5';
+const CACHE = 'tmn-v13';
 const SHELL = [
   './', './index.html', './styles.css', './config.js', './js/app.js', './js/db.js',
   './manifest.webmanifest', './icons/apple-touch-icon.png', './icons/icon-192.png', './icons/logo.png',
