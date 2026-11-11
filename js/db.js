@@ -1,7 +1,8 @@
 // Camada de dados: Supabase (partilhado na nuvem) ou modo demonstração (localStorage).
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 
-export const TABLES = ['clientes', 'produtos', 'encomendas', 'encomenda_linhas', 'despesas', 'materiais'];
+export const TABLES = ['clientes', 'produtos', 'encomendas', 'encomenda_linhas', 'despesas', 'materiais', 'produto_fotos'];
+const BUCKET = 'fotos';
 export const demo = !SUPABASE_URL || !SUPABASE_ANON_KEY;
 
 /** Dados em memória: { clientes: [...], produtos: [...], ... } */
@@ -77,12 +78,21 @@ export async function save(table, row) {
   }
   const list = cache[table];
   const i = list.findIndex((r) => r.id === saved.id);
+  const prev = i >= 0 ? list[i] : null;
   if (i >= 0) list[i] = saved; else list.push(saved);
-  if (demo) writeDemo();
+  if (demo) {
+    try { writeDemo(); } catch (e) {
+      if (prev) list[i] = prev; else list.splice(list.indexOf(saved), 1);
+      throw e;
+    }
+  }
   return saved;
 }
 
 export async function remove(table, id) {
+  if (table === 'produtos') {
+    for (const f of cache.produto_fotos.filter((x) => x.produto_id === id)) await removeFoto(f);
+  }
   if (!demo) {
     const { error } = await sb.from(table).delete().eq('id', id);
     if (error) throw new Error(error.message);
@@ -103,12 +113,118 @@ export async function saveEncomenda(enc, linhas, removedIds) {
   return saved;
 }
 
+// ---------- Fotos ----------
+// Cada foto tem duas versões: "<caminho>.jpg" (grande) e "<caminho>_t.jpg" (miniatura).
+// No modo demonstração as imagens ficam dentro da própria linha (data URL), em localStorage.
+
+const fotoFile = (caminho, size) => `${caminho}${size === 'thumb' ? '_t' : ''}.jpg`;
+
+/** Envia uma foto já comprimida ({ full, thumb } = Blob). Devolve a linha de produto_fotos. */
+export async function uploadFoto(produtoId, { full, thumb }) {
+  const temPrincipal = cache.produto_fotos.some((f) => f.produto_id === produtoId && f.principal);
+  const key = (crypto.randomUUID?.() ?? String(Date.now()) + Math.random().toString(16).slice(2)).replace(/-/g, '').slice(0, 16);
+  const caminho = `produtos/${produtoId}/${key}`;
+  if (demo) {
+    const [fullUrl, thumbUrl] = await Promise.all([blobToDataUrl(full), blobToDataUrl(thumb)]);
+    const row = { produto_id: produtoId, caminho, principal: !temPrincipal, fullUrl, thumbUrl };
+    try {
+      return await save('produto_fotos', row);
+    } catch {
+      throw new Error('Sem espaço no modo demonstração para mais fotos.');
+    }
+  }
+  const opts = { contentType: 'image/jpeg', cacheControl: '31536000', upsert: false };
+  const up = async (size, blob) => {
+    const { error } = await sb.storage.from(BUCKET).upload(fotoFile(caminho, size), blob, opts);
+    if (error) throw new Error('Falha ao enviar a foto: ' + error.message);
+  };
+  await up('full', full);
+  await up('thumb', thumb);
+  return save('produto_fotos', { produto_id: produtoId, caminho, principal: !temPrincipal });
+}
+
+export async function removeFoto(foto) {
+  if (!demo) {
+    await sb.storage.from(BUCKET).remove([fotoFile(foto.caminho, 'full'), fotoFile(foto.caminho, 'thumb')]);
+  }
+  const eraPrincipal = foto.principal;
+  await remove('produto_fotos', foto.id);
+  if (eraPrincipal) {
+    const outra = cache.produto_fotos.find((f) => f.produto_id === foto.produto_id);
+    if (outra) await save('produto_fotos', { ...outra, principal: true });
+  }
+}
+
+export async function setPrincipal(foto) {
+  for (const f of cache.produto_fotos.filter((x) => x.produto_id === foto.produto_id && x.principal && x.id !== foto.id)) {
+    await save('produto_fotos', { ...f, principal: false });
+  }
+  await save('produto_fotos', { ...foto, principal: true });
+}
+
+// Links assinados (bucket privado). Guardados localmente durante uns dias para o
+// browser poder reaproveitar a imagem em cache em vez de a descarregar de novo.
+const URL_TTL = 60 * 60 * 24 * 7; // 7 dias
+const URL_KEY = 'tmn-foto-urls';
+let urlCache = null;
+function loadUrlCache() {
+  if (urlCache) return urlCache;
+  try { urlCache = JSON.parse(localStorage.getItem(URL_KEY) || '{}'); } catch { urlCache = {}; }
+  const now = Date.now();
+  for (const [k, v] of Object.entries(urlCache)) if (v.exp - now < 864e5) delete urlCache[k];
+  return urlCache;
+}
+function saveUrlCache() {
+  try { localStorage.setItem(URL_KEY, JSON.stringify(urlCache)); } catch { /* ignorar */ }
+}
+
+/** Devolve { [ficheiro]: url } para uma lista de [foto, 'thumb'|'full']. */
+export async function fotoUrls(pedidos) {
+  const out = {};
+  if (demo) {
+    for (const [f, size] of pedidos) out[fotoFile(f.caminho, size)] = size === 'thumb' ? f.thumbUrl : f.fullUrl;
+    return out;
+  }
+  const c = loadUrlCache();
+  const faltam = [];
+  for (const [f, size] of pedidos) {
+    const file = fotoFile(f.caminho, size);
+    if (c[file]) out[file] = c[file].url; else faltam.push(file);
+  }
+  if (faltam.length) {
+    const unique = [...new Set(faltam)];
+    for (let i = 0; i < unique.length; i += 100) {
+      const { data, error } = await sb.storage.from(BUCKET).createSignedUrls(unique.slice(i, i + 100), URL_TTL);
+      if (error) throw new Error(error.message);
+      for (const d of data) {
+        if (!d.signedUrl) continue;
+        c[d.path] = { url: d.signedUrl, exp: Date.now() + URL_TTL * 1000 };
+        out[d.path] = d.signedUrl;
+      }
+    }
+    saveUrlCache();
+  }
+  return out;
+}
+export { fotoFile };
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
 // ---------- Modo demonstração ----------
 function nextId(table) {
   return cache[table].reduce((m, r) => Math.max(m, r.id), 0) + 1;
 }
 function writeDemo() {
-  try { localStorage.setItem(DEMO_KEY, JSON.stringify(cache)); } catch { /* sem armazenamento */ }
+  try { localStorage.setItem(DEMO_KEY, JSON.stringify(cache)); } catch (e) {
+    if (e?.name === 'QuotaExceededError') throw e; // sem espaço: avisar quem chamou
+  }
 }
 function readDemo() {
   try {
@@ -131,10 +247,10 @@ function demoSeed() {
       { id: 3, nome: 'Carla Demo', morada: '', contacto: '930000003' },
     ],
     produtos: [
-      { id: 1, nome: 'Bola de Natal 8cm', preco: 6, custo: 1.2, ativo: true },
-      { id: 2, nome: 'Estrela', preco: 3.5, custo: 0.6, ativo: true },
-      { id: 3, nome: 'Suporte de vaso', preco: 15, custo: 4.1, ativo: true },
-      { id: 4, nome: 'Porta-chaves com nome', preco: 5, custo: 0.9, ativo: true },
+      { id: 1, nome: 'Bola de Natal 8cm', preco: 6, custo: 1.2, ativo: true, categoria: 'Natal', descricao: 'Bola em macramé feita à mão, com fita para pendurar.', detalhes: 'Branco, cru, dourado' },
+      { id: 2, nome: 'Estrela', preco: 3.5, custo: 0.6, ativo: true, categoria: 'Natal', descricao: '', detalhes: '10 cm' },
+      { id: 3, nome: 'Suporte de vaso', preco: 15, custo: 4.1, ativo: true, categoria: 'Decoração', descricao: 'Suporte suspenso para vasos até 15 cm.', detalhes: '90 cm de comprimento' },
+      { id: 4, nome: 'Porta-chaves com nome', preco: 5, custo: 0.9, ativo: true, categoria: 'Porta-chaves', descricao: 'Personalizado com o nome à escolha.', detalhes: '' },
     ],
     encomendas: [
       { id: 1, data: d(1, 12), cliente_id: 1, pago: true, enviado: true, notas: '' },
@@ -151,6 +267,7 @@ function demoSeed() {
       { id: 1, data: d(1, 5), descricao: 'Fio de algodão 3mm', total: 24.5, pago_por: 'Jéssica' },
       { id: 2, data: d(1, 18), descricao: 'Argolas de madeira', total: 8.9, pago_por: 'Bernardo' },
     ],
+    produto_fotos: [],
     materiais: [
       { id: 1, nome: 'Fio algodão 3mm (rolo 200m)', quantidade: 200, preco_total: 12.5 },
       { id: 2, nome: 'Argola madeira 40mm', quantidade: 6, preco_total: 1.25 },

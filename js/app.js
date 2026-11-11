@@ -68,6 +68,61 @@ function estado(e) {
 }
 const custoUnitMaterial = (m) => (num(m.quantidade) ? num(m.preco_total) / num(m.quantidade) : 0);
 
+// ================= Fotos e catálogo =================
+const categorias = () => [...new Set(cache.produtos.map((p) => (p.categoria || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt'));
+const fotosDe = (pid) => cache.produto_fotos.filter((f) => f.produto_id === pid).sort((a, b) => (b.principal - a.principal) || a.id - b.id);
+const fotoPrincipal = (pid) => fotosDe(pid)[0];
+const iniciais = (s) => String(s ?? '').trim().split(/\s+/).slice(0, 2).map((w) => w[0] ?? '').join('').toUpperCase();
+
+/** <img> que é preenchida depois (links assinados); sem foto mostra um marcador com as iniciais. */
+function fotoTag(foto, size, cls, alt) {
+  return foto
+    ? `<img class="${cls}" data-foto="${foto.id}" data-size="${size}" alt="${esc(alt)}" decoding="async">`
+    : `<span class="${cls} ph" aria-hidden="true">${esc(iniciais(alt))}</span>`;
+}
+
+async function hydrate(root) {
+  const imgs = [...root.querySelectorAll('img[data-foto]:not([src])')];
+  if (!imgs.length) return;
+  const pares = imgs.map((i) => [byId('produto_fotos', i.dataset.foto), i.dataset.size, i]).filter(([f]) => f);
+  try {
+    const urls = await db.fotoUrls(pares.map(([f, size]) => [f, size]));
+    for (const [f, size, img] of pares) {
+      const u = urls[db.fotoFile(f.caminho, size)];
+      if (u) { img.addEventListener('load', () => img.classList.add('loaded'), { once: true }); img.src = u; }
+    }
+  } catch (e) { console.error(e); }
+}
+
+/** Reduz a foto no próprio telemóvel antes de a enviar: versão grande + miniatura (JPEG). */
+async function prepararFoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error('Não foi possível ler esta imagem.'));
+      i.src = url;
+    });
+    const make = (max, quality) => {
+      const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      return new Promise((res) => c.toBlob(res, 'image/jpeg', quality));
+    };
+    // No modo demonstração as fotos ficam no armazenamento do browser (pouco espaço): mais pequenas.
+    const [full, thumb] = db.demo
+      ? await Promise.all([make(900, 0.72), make(360, 0.7)])
+      : await Promise.all([make(1200, 0.8), make(480, 0.75)]);
+    return { full, thumb };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 function periodo(key) {
   const y = new Date().getFullYear();
   if (key === 'ano') return { de: `${y}-01-01`, ate: `${y}-12-31`, label: String(y) };
@@ -122,8 +177,9 @@ function pick({ title, items, allowNew = false }) {
       const found = items.filter((i) => !q || norm(i.label + ' ' + (i.sub ?? '')).includes(q)).slice(0, 150);
       list.innerHTML =
         (allowNew && q ? `<button class="item add" data-new><span class="item-main">+ Criar “${esc(input.value.trim())}”</span></button>` : '') +
-        found.map((i) => `<button class="item" data-id="${i.id}"><span class="item-main">${esc(i.label)}</span>${i.sub ? `<span class="item-sub">${esc(i.sub)}</span>` : ''}</button>`).join('') +
+        found.map((i) => `<button class="item${'foto' in i ? ' with-thumb' : ''}" data-id="${i.id}">${'foto' in i ? fotoTag(i.foto, 'thumb', 'thumb', i.label) : ''}<span class="item-main">${esc(i.label)}</span>${i.sub ? `<span class="item-sub">${esc(i.sub)}</span>` : ''}</button>`).join('') +
         (!found.length && !(allowNew && q) ? empty('Sem resultados') : '');
+      hydrate(list);
     };
     input.addEventListener('input', draw);
     wrap.addEventListener('click', (ev) => {
@@ -187,6 +243,7 @@ function bindCommon() {
     if (stack.length > 1) history.back(); else go(b.dataset.back);
   }));
   $view.querySelectorAll('[data-href]').forEach((b) => b.addEventListener('click', () => go(b.dataset.href)));
+  hydrate($view);
 }
 
 function bindSeg(root, name, onChange) {
@@ -392,7 +449,8 @@ function viewEncomenda(id, query) {
         box.innerHTML = linhas.map((l, i) => `
           <div class="line-card" data-i="${i}">
             <div class="line-top">
-              <b>${esc(produtoNome(l.produto_id))}</b>
+              ${fotoTag(fotoPrincipal(l.produto_id), 'thumb', 'thumb', produtoNome(l.produto_id))}
+              <b class="grow">${esc(produtoNome(l.produto_id))}</b>
               <button type="button" class="icon-btn" data-del aria-label="Remover"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
             </div>
             <input type="text" data-k="descricao" value="${esc(l.descricao)}" placeholder="Descrição (cor, nome, tamanho…)">
@@ -402,6 +460,7 @@ function viewEncomenda(id, query) {
               <label class="mini-toggle"><input type="checkbox" class="switch" data-k="executado" ${l.executado ? 'checked' : ''}><span>Feito</span></label>
             </div>
           </div>`).join('') || empty('Ainda sem produtos');
+        hydrate(box);
         drawTotal();
       };
       const drawTotal = () => { root.querySelector('#total').textContent = eur(totalLinhas(linhas)); };
@@ -438,7 +497,7 @@ function viewEncomenda(id, query) {
         const r = await pick({
           title: 'Produto', allowNew: true,
           items: cache.produtos.filter((p) => p.ativo !== false).sort((a, b) => a.nome.localeCompare(b.nome, 'pt'))
-            .map((p) => ({ id: p.id, label: p.nome, sub: eur(p.preco) })),
+            .map((p) => ({ id: p.id, label: p.nome, sub: [eur(p.preco), p.categoria].filter(Boolean).join(' · '), foto: fotoPrincipal(p.id) })),
         });
         if (!r) return;
         let p;
@@ -575,33 +634,66 @@ function vendidosPorProduto() {
 
 function viewProdutos() {
   let q = '';
+  let modo = pref.get('modoProd', 'catalogo');
   let f = pref.get('filtroProd', 'ativos');
+  let cat = '';
+  const cats = categorias();
   return {
     html: screen({
       title: 'Produtos',
       right: `<button class="bar-btn" data-href="#/produto/novo">+ Novo</button>`,
-      body: `${searchBox('', 'Procurar produto')}${segmented('f', [['ativos', 'Ativos'], ['vendidos', 'Mais vendidos'], ['todos', 'Todos']], f)}<div class="list" id="lista"></div>`,
+      body: `
+        ${searchBox('', 'Procurar produto')}
+        ${segmented('modo', [['catalogo', 'Catálogo'], ['lista', 'Lista e custos']], modo)}
+        ${cats.length ? `<div class="cats" id="cats">${['', ...cats].map((c) => `<button type="button" data-c="${esc(c)}" class="${c === cat ? 'on' : ''}">${esc(c || 'Todas')}</button>`).join('')}</div>` : ''}
+        <div id="filtro"></div>
+        <div id="lista"></div>`,
     }),
     bind(root) {
       const vend = vendidosPorProduto();
       const draw = () => {
         const qq = norm(q.trim());
-        let rows = cache.produtos.filter((p) => (f === 'todos' || p.ativo !== false) && (!qq || norm(p.nome).includes(qq)));
-        rows = f === 'vendidos'
+        root.querySelector('#filtro').innerHTML = modo === 'lista'
+          ? segmented('f', [['ativos', 'Ativos'], ['vendidos', 'Mais vendidos'], ['todos', 'Todos']], f) : '';
+        bindSeg(root, 'f', (v) => { f = v; pref.set('filtroProd', v); draw(); });
+        let rows = cache.produtos.filter((p) =>
+          (modo === 'catalogo' ? p.ativo !== false : (f === 'todos' || p.ativo !== false)) &&
+          (!cat || p.categoria === cat) &&
+          (!qq || norm(`${p.nome} ${p.categoria} ${p.descricao}`).includes(qq)));
+        rows = modo === 'lista' && f === 'vendidos'
           ? rows.sort((a, b) => (vend.get(b.id)?.qt ?? 0) - (vend.get(a.id)?.qt ?? 0))
           : rows.sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
-        root.querySelector('#lista').innerHTML = rows.map((p) => {
-          const margem = num(p.preco) - num(p.custo);
-          return `<button class="item" data-href="#/produto/${p.id}">
-            <span class="item-main">${esc(p.nome)}${p.ativo === false ? ' <span class="chip">inativo</span>' : ''}</span>
-            <span class="item-right">${eur(p.preco)}</span>
-            <span class="item-sub">custo ${eur(p.custo)} · margem ${eur(margem)} · ${vend.get(p.id)?.qt ?? 0} vendidos</span>
-          </button>`;
-        }).join('') || empty('Nenhum produto');
+        const box = root.querySelector('#lista');
+        if (modo === 'catalogo') {
+          box.className = 'grid';
+          box.innerHTML = rows.map((p) => `
+            <button class="card" data-href="#/produto/${p.id}">
+              ${fotoTag(fotoPrincipal(p.id), 'thumb', 'card-img', p.nome)}
+              <span class="card-body"><span class="card-name">${esc(p.nome)}</span><span class="card-price">${eur(p.preco)}</span></span>
+            </button>`).join('') || `<div class="empty wide">Nenhum produto</div>`;
+        } else {
+          box.className = 'list';
+          box.innerHTML = rows.map((p) => {
+            const margem = num(p.preco) - num(p.custo);
+            return `<button class="item with-thumb" data-href="#/produto/${p.id}">
+              ${fotoTag(fotoPrincipal(p.id), 'thumb', 'thumb', p.nome)}
+              <span class="item-main">${esc(p.nome)}${p.ativo === false ? ' <span class="chip">inativo</span>' : ''}</span>
+              <span class="item-right">${eur(p.preco)}</span>
+              <span class="item-sub">custo ${eur(p.custo)} · margem ${eur(margem)} · ${vend.get(p.id)?.qt ?? 0} vendidos</span>
+            </button>`;
+          }).join('') || empty('Nenhum produto');
+        }
         bindCommon();
       };
       bindSearch(root, (v) => { q = v; draw(); });
-      bindSeg(root, 'f', (v) => { f = v; pref.set('filtroProd', v); draw(); });
+      bindSeg(root, 'modo', (v) => { modo = v; pref.set('modoProd', v); draw(); });
+      root.querySelector('#cats')?.addEventListener('click', (ev) => {
+        const b = ev.target.closest('button');
+        if (!b) return;
+        cat = b.dataset.c;
+        root.querySelectorAll('#cats button').forEach((x) => x.classList.toggle('on', x === b));
+        draw();
+      });
       draw();
     },
   };
@@ -609,7 +701,7 @@ function viewProdutos() {
 
 function viewProduto(id) {
   const isNew = id === 'novo';
-  const p = isNew ? { nome: '', preco: 0, custo: 0, ativo: true } : byId('produtos', id);
+  const p = isNew ? { nome: '', preco: 0, custo: 0, ativo: true, categoria: '', descricao: '', detalhes: '' } : byId('produtos', id);
   if (!p) return notFound('#/produtos');
   const v = vendidosPorProduto().get(p.id) ?? { qt: 0, total: 0 };
   const usado = !isNew && cache.encomenda_linhas.some((l) => l.produto_id === p.id);
@@ -619,12 +711,19 @@ function viewProduto(id) {
       back: '#/produtos',
       right: `<button class="bar-btn strong" id="guardar">Guardar</button>`,
       body: `
+        ${isNew ? `<p class="hint">Guarde o produto para depois lhe adicionar fotos.</p>` : `<div id="galeria"></div>`}
         <form id="f" onsubmit="return false">
           <div class="list form">
             ${field('Nome', `<input type="text" name="nome" value="${esc(p.nome)}" autocomplete="off">`)}
+            ${field('Categoria', `<input type="text" name="categoria" value="${esc(p.categoria)}" list="dl-cats" placeholder="Natal, Decoração…" autocomplete="off">
+              <datalist id="dl-cats">${categorias().map((c) => `<option value="${esc(c)}">`).join('')}</datalist>`)}
+            ${field('Descrição', `<textarea name="descricao" rows="3" placeholder="Como é, para que serve…">${esc(p.descricao)}</textarea>`)}
+            ${field('Medidas / cores disponíveis', `<input type="text" name="detalhes" value="${esc(p.detalhes)}" autocomplete="off">`)}
+          </div>
+          <div class="list form">
             ${field('Preço de venda (€)', `<input type="text" inputmode="decimal" name="preco" value="${fmt2(p.preco)}">`)}
             ${field('Custo de produção (€)', `<input type="text" inputmode="decimal" name="custo" value="${fmt2(p.custo)}">`)}
-            ${toggle('Ativo (aparece nas novas encomendas)', 'ativo', p.ativo !== false)}
+            ${toggle('Ativo (aparece no catálogo e nas encomendas)', 'ativo', p.ativo !== false)}
           </div>
           <div class="kpis">
             <div class="kpi"><span>Margem</span><b id="margem"></b></div>
@@ -641,25 +740,102 @@ function viewProduto(id) {
         root.querySelector('#margem').textContent = `${eur(pr - cu)}${cu ? ` (${Math.round(((pr - cu) / cu) * 100)}%)` : ''}`;
       };
       form.addEventListener('input', drawMargem); drawMargem();
+
+      // ---- Galeria ----
+      const drawGaleria = () => {
+        const box = root.querySelector('#galeria');
+        if (!box) return;
+        const fotos = fotosDe(p.id);
+        box.innerHTML = `
+          <div class="gallery">
+            ${fotos.map((f, i) => `<button type="button" class="g-item" data-i="${i}">
+              ${fotoTag(f, 'thumb', 'g-img', p.nome)}${f.principal && fotos.length > 1 ? '<span class="g-star">Principal</span>' : ''}</button>`).join('')}
+            <label class="g-add"><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+              <span>${fotos.length ? 'Mais fotos' : 'Adicionar fotos'}</span>
+              <input type="file" accept="image/*" multiple hidden></label>
+          </div>`;
+        hydrate(box);
+        box.querySelectorAll('.g-item').forEach((b) => b.addEventListener('click', () => viewer(fotosDe(p.id), Number(b.dataset.i), drawGaleria)));
+        box.querySelector('input[type=file]').addEventListener('change', async (ev) => {
+          const files = [...ev.target.files];
+          ev.target.value = '';
+          for (let i = 0; i < files.length; i++) {
+            toast(`A enviar foto ${i + 1} de ${files.length}…`);
+            try {
+              const blobs = await prepararFoto(files[i]);
+              await db.uploadFoto(p.id, blobs);
+              drawGaleria();
+            } catch (e) {
+              console.error(e);
+              toast(e.message || 'Não foi possível enviar a foto.', true);
+              return;
+            }
+          }
+          toast(files.length === 1 ? 'Foto adicionada' : `${files.length} fotos adicionadas`);
+        });
+      };
+      drawGaleria();
+
       root.querySelector('#guardar').addEventListener('click', async () => {
         const d = formData(form);
         if (!d.nome.trim()) return toast('O nome é obrigatório.', true);
-        const saved = await run(() => db.save('produtos', { ...(isNew ? {} : { id: p.id }), nome: d.nome.trim(), preco: num(d.preco), custo: num(d.custo), ativo: d.ativo }), 'Produto guardado');
+        const saved = await run(() => db.save('produtos', {
+          ...(isNew ? {} : { id: p.id }), nome: d.nome.trim(), preco: num(d.preco), custo: num(d.custo), ativo: d.ativo,
+          categoria: d.categoria.trim() || null, descricao: d.descricao.trim() || null, detalhes: d.detalhes.trim() || null,
+        }), 'Produto guardado');
         if (isNew) { history.replaceState(null, '', `#/produto/${saved.id}`); stack[stack.length - 1] = `#/produto/${saved.id}`; route(); }
       });
       root.querySelector('#apagar')?.addEventListener('click', async () => {
         if (usado) {
-          if (!confirm('Este produto aparece em encomendas, por isso fica só desativado (deixa de aparecer nas novas encomendas). Continuar?')) return;
+          if (!confirm('Este produto aparece em encomendas, por isso fica só desativado (deixa de aparecer no catálogo e nas novas encomendas). Continuar?')) return;
           await run(() => db.save('produtos', { ...p, ativo: false }), 'Produto desativado');
           route();
         } else {
-          if (!confirm(`Apagar ${p.nome}?`)) return;
+          const n = fotosDe(p.id).length;
+          if (!confirm(`Apagar ${p.nome}${n ? ` e as suas ${n} foto(s)` : ''}? Não é possível desfazer.`)) return;
           await run(() => db.remove('produtos', p.id), 'Produto apagado');
           go('#/produtos');
         }
       });
     },
   };
+}
+
+/** Visualizador de fotos em ecrã inteiro, com deslizar, "principal" e apagar. */
+function viewer(fotos, start, onChange) {
+  if (!fotos.length) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'viewer';
+  wrap.innerHTML = `
+    <div class="viewer-top"><button class="v-btn" data-close aria-label="Fechar"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button><span id="v-count"></span><span></span></div>
+    <div class="viewer-track">${fotos.map((f) => `<div class="viewer-slide">${fotoTag(f, 'full', 'viewer-img', '')}</div>`).join('')}</div>
+    <div class="viewer-bottom"><button class="v-btn text" data-principal>★ Principal</button><button class="v-btn text danger" data-del>Apagar</button></div>`;
+  document.body.appendChild(wrap);
+  const track = wrap.querySelector('.viewer-track');
+  const idx = () => Math.round(track.scrollLeft / track.clientWidth);
+  const update = () => {
+    const i = idx();
+    wrap.querySelector('#v-count').textContent = `${i + 1} / ${fotos.length}`;
+    const btn = wrap.querySelector('[data-principal]');
+    btn.disabled = fotos[i].principal;
+    btn.textContent = fotos[i].principal ? '★ Foto principal' : '☆ Tornar principal';
+  };
+  track.addEventListener('scroll', () => requestAnimationFrame(update), { passive: true });
+  requestAnimationFrame(() => { track.scrollLeft = start * track.clientWidth; update(); });
+  hydrate(wrap);
+  const close = () => { wrap.remove(); onChange?.(); };
+  const onKey = (e) => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+  document.addEventListener('keydown', onKey);
+  wrap.querySelector('[data-close]').addEventListener('click', close);
+  wrap.querySelector('[data-principal]').addEventListener('click', async () => {
+    await run(() => db.setPrincipal(fotos[idx()]), 'Foto principal definida');
+    close();
+  });
+  wrap.querySelector('[data-del]').addEventListener('click', async () => {
+    if (!confirm('Apagar esta foto? Não é possível desfazer.')) return;
+    await run(() => db.removeFoto(fotos[idx()]), 'Foto apagada');
+    close();
+  });
 }
 
 // ================= Mais =================
