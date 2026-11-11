@@ -731,6 +731,7 @@ function viewProdutos() {
   let q = '';
   let modo = pref.get('modoProd', 'catalogo');
   let f = pref.get('filtroProd', 'ativos');
+  let ordem = pref.get('ordemVend', 'qt'); // em "Mais vendidos": 'qt', 'valor' ou 'nome'
   let cat = '';
   const cats = categorias();
   return {
@@ -748,15 +749,47 @@ function viewProdutos() {
       const vend = vendidosPorProduto();
       const draw = () => {
         const qq = norm(q.trim());
+        // Em "Mais vendidos", a ordenação fica escondida num botão ⋯ ao lado dos filtros.
         root.querySelector('#filtro').innerHTML = modo === 'lista'
-          ? segmented('f', [['ativos', 'Ativos'], ['vendidos', 'Mais vendidos'], ['todos', 'Todos']], f) : '';
+          ? `<div class="filter-row">
+              ${segmented('f', [['ativos', 'Ativos'], ['vendidos', 'Mais vendidos'], ['todos', 'Todos']], f)}
+              ${f === 'vendidos' ? `<div class="menu-wrap">
+                <button type="button" class="more-btn" id="ordBtn" aria-label="Ordenar" aria-haspopup="menu" aria-expanded="false">
+                  <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+                <div class="menu" id="ordMenu" role="menu" hidden>
+                  <span class="menu-title">Ordenar por</span>
+                  ${[['qt', 'Quantidade'], ['valor', 'Valor total'], ['nome', 'Nome (A–Z)']].map(([v, l]) =>
+                    `<button type="button" role="menuitemradio" aria-checked="${v === ordem}" data-ord="${v}">${l}${v === ordem ? '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>' : ''}</button>`).join('')}
+                </div></div>` : ''}
+            </div>`
+          : '';
         bindSeg(root, 'f', (v) => { f = v; pref.set('filtroProd', v); draw(); });
+        const ordBtn = root.querySelector('#ordBtn');
+        if (ordBtn) {
+          const menu = root.querySelector('#ordMenu');
+          const fechar = () => { menu.hidden = true; ordBtn.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', foraDoMenu, true); };
+          const foraDoMenu = (ev) => { if (!ev.target.closest('.menu-wrap')) fechar(); };
+          ordBtn.addEventListener('click', () => {
+            if (!menu.hidden) return fechar();
+            menu.hidden = false; ordBtn.setAttribute('aria-expanded', 'true');
+            document.addEventListener('click', foraDoMenu, true);
+          });
+          menu.addEventListener('click', (ev) => {
+            const b = ev.target.closest('[data-ord]');
+            if (!b) return;
+            fechar(); ordem = b.dataset.ord; pref.set('ordemVend', ordem); draw();
+          });
+        }
         let rows = cache.produtos.filter((p) =>
           (modo === 'catalogo' ? p.ativo !== false : (f === 'todos' || p.ativo !== false)) &&
           (!cat || p.categoria === cat) &&
           (!qq || norm(`${p.nome} ${p.categoria} ${p.descricao}`).includes(qq)));
+        const qt = (p) => vend.get(p.id)?.qt ?? 0;
+        const valor = (p) => vend.get(p.id)?.total ?? 0;
         rows = modo === 'lista' && f === 'vendidos'
-          ? rows.sort((a, b) => (vend.get(b.id)?.qt ?? 0) - (vend.get(a.id)?.qt ?? 0))
+          ? rows.sort(ordem === 'valor' ? (a, b) => valor(b) - valor(a) || qt(b) - qt(a)
+            : ordem === 'nome' ? (a, b) => a.nome.localeCompare(b.nome, 'pt')
+            : (a, b) => qt(b) - qt(a) || valor(b) - valor(a))
           : rows.sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
         const box = root.querySelector('#lista');
         if (modo === 'catalogo') {
