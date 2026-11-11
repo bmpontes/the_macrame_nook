@@ -1,9 +1,10 @@
 // Camada de dados: Supabase (partilhado na nuvem) ou modo demonstração (localStorage).
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../config.js';
 
-export const TABLES = ['clientes', 'produtos', 'encomendas', 'encomenda_linhas', 'despesas', 'materiais', 'produto_fotos'];
+export const TABLES = ['clientes', 'produtos', 'encomendas', 'encomenda_linhas', 'despesas', 'materiais', 'produto_fotos', 'produto_materiais'];
 const BUCKET = 'fotos';
-export const demo = !SUPABASE_URL || !SUPABASE_ANON_KEY;
+// "?demo" no endereço força o modo demonstração (útil para testar sem tocar nos dados reais).
+export const demo = !SUPABASE_URL || !SUPABASE_ANON_KEY || new URLSearchParams(location.search).has('demo');
 
 /** Dados em memória: { clientes: [...], produtos: [...], ... } */
 export const cache = Object.fromEntries(TABLES.map((t) => [t, []]));
@@ -101,7 +102,11 @@ export async function remove(table, id) {
   // Replicar os efeitos das chaves estrangeiras na cópia em memória.
   if (table === 'encomendas') cache.encomenda_linhas = cache.encomenda_linhas.filter((l) => l.encomenda_id !== id);
   if (table === 'clientes') cache.encomendas.forEach((e) => { if (e.cliente_id === id) e.cliente_id = null; });
-  if (table === 'produtos') cache.encomenda_linhas.forEach((l) => { if (l.produto_id === id) l.produto_id = null; });
+  if (table === 'produtos') {
+    cache.encomenda_linhas.forEach((l) => { if (l.produto_id === id) l.produto_id = null; });
+    cache.produto_materiais = cache.produto_materiais.filter((x) => x.produto_id !== id);
+  }
+  if (table === 'materiais') cache.produto_materiais = cache.produto_materiais.filter((x) => x.material_id !== id);
   if (demo) writeDemo();
 }
 
@@ -111,6 +116,18 @@ export async function saveEncomenda(enc, linhas, removedIds) {
   for (const id of removedIds) await remove('encomenda_linhas', id);
   for (const l of linhas) await save('encomenda_linhas', { ...l, encomenda_id: saved.id });
   return saved;
+}
+
+/** Substitui a lista de materiais de um produto. itens = [{ material_id, quantidade }] */
+export async function saveProdutoMateriais(produtoId, itens) {
+  const atuais = cache.produto_materiais.filter((x) => x.produto_id === produtoId);
+  // Reaproveitar linhas existentes (atualizar), inserir as novas e apagar as que sobram.
+  for (let i = 0; i < itens.length; i++) {
+    const row = { produto_id: produtoId, material_id: itens[i].material_id, quantidade: itens[i].quantidade };
+    if (atuais[i]) row.id = atuais[i].id;
+    await save('produto_materiais', row);
+  }
+  for (const r of atuais.slice(itens.length)) await remove('produto_materiais', r.id);
 }
 
 // ---------- Fotos ----------
@@ -268,6 +285,7 @@ function demoSeed() {
       { id: 2, data: d(1, 18), descricao: 'Argolas de madeira', total: 8.9, pago_por: 'Bernardo' },
     ],
     produto_fotos: [],
+    produto_materiais: [],
     materiais: [
       { id: 1, nome: 'Fio algodão 3mm (rolo 200m)', quantidade: 200, preco_total: 12.5 },
       { id: 2, nome: 'Argola madeira 40mm', quantidade: 6, preco_total: 1.25 },

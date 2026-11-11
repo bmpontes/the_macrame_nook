@@ -9,6 +9,9 @@ const $tabs = document.getElementById('tabs');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR' });
 const eur = (n) => money.format(Number(n) || 0);
+// Custos por unidade de materiais podem ser frações de cêntimo: mostrar até 4 casas.
+const moneyUn = new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const eurUn = (n) => moneyUn.format(Number(n) || 0);
 const num = (s) => { const n = Number(String(s ?? '').replace(/\s/g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
 const fmt2 = (n) => (Math.round((Number(n) || 0) * 100) / 100).toString().replace('.', ',');
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
@@ -67,6 +70,12 @@ function estado(e) {
   return { executado, concluida: executado && e.pago && e.enviado };
 }
 const custoUnitMaterial = (m) => (num(m.quantidade) ? num(m.preco_total) / num(m.quantidade) : 0);
+
+// Materiais usados em cada produto (lista guardada pela calculadora).
+const materiaisDe = (pid) => cache.produto_materiais.filter((x) => x.produto_id === pid);
+const custoAtualMateriais = (p) =>
+  materiaisDe(p.id).reduce((s, x) => s + custoUnitMaterial(byId('materiais', x.material_id) ?? {}) * num(x.quantidade), 0) + num(p.custo_extra);
+const round2 = (n) => Math.round(n * 100) / 100;
 
 // ================= Fotos e catálogo =================
 const categorias = () => [...new Set(cache.produtos.map((p) => (p.categoria || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt'));
@@ -705,6 +714,9 @@ function viewProduto(id) {
   if (!p) return notFound('#/produtos');
   const v = vendidosPorProduto().get(p.id) ?? { qt: 0, total: 0 };
   const usado = !isNew && cache.encomenda_linhas.some((l) => l.produto_id === p.id);
+  const mats = isNew ? [] : materiaisDe(p.id).map((x) => ({ x, m: byId('materiais', x.material_id) })).filter((u) => u.m);
+  const custoAtual = isNew ? 0 : round2(custoAtualMateriais(p));
+  const desatualizado = mats.length > 0 && Math.abs(custoAtual - num(p.custo)) > 0.009;
   return {
     html: screen({
       title: isNew ? 'Novo produto' : p.nome,
@@ -729,7 +741,21 @@ function viewProduto(id) {
             <div class="kpi"><span>Margem</span><b id="margem"></b></div>
             ${isNew ? '' : `<div class="kpi"><span>Vendidos</span><b>${v.qt} · ${eur(v.total)}</b></div>`}
           </div>
-          <button type="button" class="btn ghost" data-href="#/calculadora${isNew ? '' : `?produto=${p.id}`}">Calcular custo com materiais</button>
+          ${isNew ? '' : `
+            <h2 class="section">Materiais por peça${mats.length ? `<span>${eur(custoAtual)}</span>` : ''}</h2>
+            ${desatualizado ? `<div class="banner warn">Os preços dos materiais mudaram: o custo atual é <b>${eur(custoAtual)}</b> (guardado: ${eur(p.custo)}).
+              <button type="button" class="link-btn" id="atualizarCusto">Atualizar custo</button></div>` : ''}
+            <div class="list">
+              ${mats.map(({ x, m }) => `
+                <button type="button" class="item" data-href="#/material/${m.id}">
+                  <span class="item-main">${esc(m.nome)}</span>
+                  <span class="item-right">${eur(custoUnitMaterial(m) * num(x.quantidade))}</span>
+                  <span class="item-sub">${fmt2(x.quantidade)} × ${eurUn(custoUnitMaterial(m))}/un</span>
+                </button>`).join('')}
+              ${mats.length && num(p.custo_extra) ? `<div class="item static"><span class="item-main">Outros custos</span><span class="item-right">${eur(p.custo_extra)}</span></div>` : ''}
+              ${mats.length ? `<div class="item static total"><span class="item-main">Custo de produção</span><span class="item-right">${eur(custoAtual)}</span></div>` : empty('Ainda sem materiais associados')}
+            </div>`}
+          <button type="button" class="btn ghost" data-href="#/calculadora${isNew ? '' : `?produto=${p.id}`}">${mats.length ? 'Editar materiais e custo' : 'Calcular custo com materiais'}</button>
           ${isNew ? '' : `<button type="button" class="btn danger" id="apagar">${usado ? 'Desativar produto' : 'Apagar produto'}</button>`}
         </form>`,
     }),
@@ -740,6 +766,11 @@ function viewProduto(id) {
         root.querySelector('#margem').textContent = `${eur(pr - cu)}${cu ? ` (${Math.round(((pr - cu) / cu) * 100)}%)` : ''}`;
       };
       form.addEventListener('input', drawMargem); drawMargem();
+
+      root.querySelector('#atualizarCusto')?.addEventListener('click', async () => {
+        await run(() => db.save('produtos', { ...p, custo: custoAtual }), 'Custo de produção atualizado');
+        route();
+      });
 
       // ---- Galeria ----
       const drawGaleria = () => {
@@ -971,7 +1002,7 @@ function viewMateriais() {
         root.querySelector('#lista').innerHTML = cache.materiais.filter((m) => !qq || norm(m.nome).includes(qq))
           .sort((a, b) => a.nome.localeCompare(b.nome, 'pt'))
           .map((m) => `<button class="item" data-href="#/material/${m.id}">
-            <span class="item-main">${esc(m.nome)}</span><span class="item-right">${eur(custoUnitMaterial(m))}/un</span>
+            <span class="item-main">${esc(m.nome)}</span><span class="item-right">${eurUn(custoUnitMaterial(m))}/un</span>
             <span class="item-sub">${fmt2(m.quantidade)} un por ${eur(m.preco_total)}</span></button>`).join('') || empty('Nenhum material');
         bindCommon();
       };
@@ -985,6 +1016,9 @@ function viewMaterial(id) {
   const isNew = id === 'novo';
   const m = isNew ? { nome: '', quantidade: 1, preco_total: 0 } : byId('materiais', id);
   if (!m) return notFound('#/materiais');
+  const usos = isNew ? [] : cache.produto_materiais.filter((x) => x.material_id === m.id)
+    .map((x) => ({ x, p: byId('produtos', x.produto_id) })).filter((u) => u.p)
+    .sort((a, b) => a.p.nome.localeCompare(b.p.nome, 'pt'));
   return {
     html: screen({
       title: isNew ? 'Novo material' : m.nome, back: '#/materiais',
@@ -997,12 +1031,21 @@ function viewMaterial(id) {
             ${field('Preço pago (€)', `<input type="text" inputmode="decimal" name="preco_total" value="${fmt2(m.preco_total)}">`)}
           </div>
           <div class="kpis"><div class="kpi wide"><span>Custo por unidade</span><b id="unit"></b></div></div>
-          ${isNew ? '' : `<button type="button" class="btn danger" id="apagar">Apagar material</button>`}
+          ${isNew ? '' : `
+            <h2 class="section">Usado em</h2>
+            <div class="list">${usos.map(({ x, p }) => `
+              <button type="button" class="item with-thumb" data-href="#/produto/${p.id}">
+                ${fotoTag(fotoPrincipal(p.id), 'thumb', 'thumb', p.nome)}
+                <span class="item-main">${esc(p.nome)}</span>
+                <span class="item-right">${eur(custoUnitMaterial(m) * num(x.quantidade))}</span>
+                <span class="item-sub">${fmt2(x.quantidade)} un por peça</span>
+              </button>`).join('') || empty('Ainda não está associado a nenhum produto')}</div>
+            <button type="button" class="btn danger" id="apagar">Apagar material</button>`}
         </form>`,
     }),
     bind(root) {
       const form = root.querySelector('#f');
-      const drawUnit = () => { const f = formData(form); root.querySelector('#unit').textContent = eur(custoUnitMaterial(f)); };
+      const drawUnit = () => { const f = formData(form); root.querySelector('#unit').textContent = eurUn(custoUnitMaterial(f)); };
       form.addEventListener('input', drawUnit); drawUnit();
       root.querySelector('#guardar').addEventListener('click', async () => {
         const f = formData(form);
@@ -1011,7 +1054,10 @@ function viewMaterial(id) {
         if (stack.length > 1) history.back(); else go('#/materiais');
       });
       root.querySelector('#apagar')?.addEventListener('click', async () => {
-        if (!confirm(`Apagar ${m.nome}?`)) return;
+        const msg = usos.length
+          ? `${m.nome} é usado em ${usos.length} produto(s) e será retirado da lista de materiais desses produtos. Apagar mesmo assim?`
+          : `Apagar ${m.nome}?`;
+        if (!confirm(msg)) return;
         await run(() => db.remove('materiais', m.id), 'Material apagado');
         go('#/materiais');
       });
@@ -1022,18 +1068,20 @@ function viewMaterial(id) {
 // ================= Calculadora =================
 function viewCalculadora(_, query) {
   const alvo = query.produto ? byId('produtos', query.produto) : null;
-  const itens = [];
-  let margem = num(pref.get('margem', '35'));
+  // Com produto: começar pela lista guardada desse produto.
+  const itens = alvo ? materiaisDe(alvo.id).map((x) => ({ id: x.material_id, qt: num(x.quantidade) })) : [];
+  let margem = alvo?.margem != null ? num(alvo.margem) : num(pref.get('margem', '35'));
+  const extraInicial = alvo ? num(alvo.custo_extra) : 0;
   return {
     html: screen({
       title: 'Calculadora', back: alvo ? `#/produto/${alvo.id}` : '#/mais',
       body: `
-        ${alvo ? `<p class="hint">Para o produto: <b>${esc(alvo.nome)}</b></p>` : ''}
+        ${alvo ? `<p class="hint">Para o produto: <b>${esc(alvo.nome)}</b>${itens.length ? ' · lista guardada carregada' : ''}</p>` : ''}
         <h2 class="section">Materiais usados</h2>
         <div id="itens"></div>
         <button type="button" class="btn ghost" id="add">+ Adicionar material</button>
         <div class="list form">
-          ${field('Outros custos (€) — embalagem, portes, tempo…', `<input type="text" inputmode="decimal" id="extra" value="0">`)}
+          ${field('Outros custos (€) — embalagem, portes, tempo…', `<input type="text" inputmode="decimal" id="extra" value="${fmt2(extraInicial)}">`)}
           ${field('Margem (%)', `<input type="text" inputmode="decimal" id="margem" value="${fmt2(margem)}">`)}
         </div>
         <div class="kpis">
@@ -1044,27 +1092,32 @@ function viewCalculadora(_, query) {
     }),
     bind(root) {
       const calc = () => {
-        const custo = itens.reduce((s, i) => s + custoUnitMaterial(byId('materiais', i.id) ?? {}) * num(i.qt), 0) + num(root.querySelector('#extra').value);
+        const extra = num(root.querySelector('#extra').value);
+        const custo = itens.reduce((s, i) => s + custoUnitMaterial(byId('materiais', i.id) ?? {}) * num(i.qt), 0) + extra;
         margem = num(root.querySelector('#margem').value);
         pref.set('margem', String(margem));
         const pvp = custo * (1 + margem / 100);
         root.querySelector('#custo').textContent = eur(custo);
         root.querySelector('#pvp').textContent = eur(pvp);
-        return { custo: Math.round(custo * 100) / 100, pvp: Math.round(pvp * 100) / 100 };
+        return { custo: round2(custo), pvp: round2(pvp), extra: round2(extra) };
       };
       const draw = () => {
         root.querySelector('#itens').innerHTML = itens.map((i, k) => {
           const m = byId('materiais', i.id);
           return `<div class="line-card" data-k="${k}">
-            <div class="line-top"><b>${esc(m?.nome)}</b><button type="button" class="icon-btn" data-del aria-label="Remover"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+            <div class="line-top"><b class="grow">${esc(m?.nome ?? 'Material removido')}</b><button type="button" class="icon-btn" data-del aria-label="Remover"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
             <div class="line-grid"><label class="price">Qt <input type="text" inputmode="decimal" data-qt value="${fmt2(i.qt)}"></label>
-            <span class="muted">× ${eur(custoUnitMaterial(m))} = <b>${eur(custoUnitMaterial(m) * num(i.qt))}</b></span></div></div>`;
+            <span class="muted">× ${eurUn(custoUnitMaterial(m ?? {}))} = <b data-sub>${eur(custoUnitMaterial(m ?? {}) * num(i.qt))}</b></span></div></div>`;
         }).join('') || empty('Adicione os materiais usados numa peça');
         calc();
       };
-      root.querySelector('#itens').addEventListener('change', (ev) => {
+      root.querySelector('#itens').addEventListener('input', (ev) => {
         const card = ev.target.closest('.line-card');
-        if (card && ev.target.hasAttribute('data-qt')) { itens[card.dataset.k].qt = num(ev.target.value); draw(); }
+        if (!card || !ev.target.hasAttribute('data-qt')) return;
+        const i = itens[card.dataset.k];
+        i.qt = num(ev.target.value);
+        card.querySelector('[data-sub]').textContent = eur(custoUnitMaterial(byId('materiais', i.id) ?? {}) * i.qt);
+        calc();
       });
       root.querySelector('#itens').addEventListener('click', (ev) => {
         const card = ev.target.closest('.line-card');
@@ -1073,21 +1126,36 @@ function viewCalculadora(_, query) {
       root.querySelector('#extra').addEventListener('input', calc);
       root.querySelector('#margem').addEventListener('input', calc);
       root.querySelector('#add').addEventListener('click', async () => {
-        const r = await pick({ title: 'Material', items: [...cache.materiais].sort((a, b) => a.nome.localeCompare(b.nome, 'pt')).map((m) => ({ id: m.id, label: m.nome, sub: `${eur(custoUnitMaterial(m))}/un` })) });
+        const r = await pick({ title: 'Material', allowNew: true, items: [...cache.materiais].sort((a, b) => a.nome.localeCompare(b.nome, 'pt')).map((m) => ({ id: m.id, label: m.nome, sub: `${eurUn(custoUnitMaterial(m))}/un` })) });
         if (!r) return;
-        itens.push({ id: r.id, qt: 1 }); draw();
+        let matId = r.id;
+        if (r.novo) {
+          const qt = num(prompt(`Quantidade comprada de “${r.novo}” (unidades, metros…):`, '1')) || 1;
+          const preco = num(prompt('Quanto pagou por essa quantidade (€)?', '0'));
+          matId = (await run(() => db.save('materiais', { nome: r.novo, quantidade: qt, preco_total: preco }), 'Material criado')).id;
+        }
+        if (itens.some((i) => i.id === matId)) { toast('Esse material já está na lista — altere a quantidade.'); return; }
+        itens.push({ id: matId, qt: 1 }); draw();
       });
       root.querySelector('#aplicar').addEventListener('click', async () => {
-        const { custo, pvp } = calc();
+        const { custo, pvp, extra } = calc();
         let p = alvo;
         if (!p) {
-          const r = await pick({ title: 'Guardar no produto', allowNew: true, items: [...cache.produtos].sort((a, b) => a.nome.localeCompare(b.nome, 'pt')).map((x) => ({ id: x.id, label: x.nome, sub: `${eur(x.preco)} · custo ${eur(x.custo)}` })) });
+          const r = await pick({ title: 'Guardar no produto', allowNew: true, items: [...cache.produtos].sort((a, b) => a.nome.localeCompare(b.nome, 'pt')).map((x) => ({ id: x.id, label: x.nome, sub: `${eur(x.preco)} · custo ${eur(x.custo)}`, foto: fotoPrincipal(x.id) })) });
           if (!r) return;
           p = r.novo ? { nome: r.novo, preco: pvp, custo, ativo: true } : byId('produtos', r.id);
+          if (p.id != null && materiaisDe(p.id).length && !confirm(`“${p.nome}” já tem uma lista de materiais guardada. Substituir pela atual?`)) return;
         }
         const mudarPreco = p.id == null || confirm(`Custo de produção de “${p.nome}”: ${eur(custo)}.\n\nAtualizar também o preço de venda para ${eur(pvp)}? (Cancelar = manter ${eur(p.preco)})`);
-        const saved = await run(() => db.save('produtos', { ...p, custo, preco: mudarPreco ? pvp : p.preco }), 'Produto atualizado');
-        go(`#/produto/${saved.id}`);
+        const btn = root.querySelector('#aplicar'); btn.disabled = true;
+        try {
+          const saved = await run(async () => {
+            const prod = await db.save('produtos', { ...p, custo, custo_extra: extra, margem, preco: mudarPreco ? pvp : p.preco });
+            await db.saveProdutoMateriais(prod.id, itens.filter((i) => byId('materiais', i.id)).map((i) => ({ material_id: i.id, quantidade: num(i.qt) })));
+            return prod;
+          }, 'Custo e materiais guardados');
+          if (alvo && stack.length > 1) history.back(); else go(`#/produto/${saved.id}`);
+        } catch { btn.disabled = false; }
       });
       draw();
     },

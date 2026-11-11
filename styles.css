@@ -321,3 +321,8 @@ img[data-foto].loaded { opacity: 1; }
 .v-btn.text { width: auto; padding: 0 18px; font-size: 15px; font-weight: 600; }
 .v-btn.danger { color: #FF8A80; }
 .v-btn:disabled { opacity: 0.6; }
+
+/* ---------- Materiais por produto ---------- */
+.banner.warn { background: color-mix(in srgb, var(--warn) 14%, var(--card)); }
+.link-btn { border: 0; background: none; color: var(--accent); font-weight: 600; padding: 4px 0 0; display: block; font-size: 15px; }
+.item.total .item-main, .item.total .item-right { font-weight: 700; color: var(--ink); }
