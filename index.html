@@ -4,7 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>The Macrame Nook</title>
-  <meta name="theme-color" content="#AF8174">
+  <meta name="theme-color" content="#FAF8F7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <script>
+    // Aplicar o tema escolhido antes de desenhar a página (evita um "flash" de cor).
+    try {
+      var t = localStorage.getItem('tmn-tema');
+      if (t === 'claro') document.documentElement.dataset.theme = 'light';
+      if (t === 'escuro') document.documentElement.dataset.theme = 'dark';
+    } catch (e) {}
+  </script>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">

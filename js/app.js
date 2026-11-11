@@ -21,6 +21,20 @@ const pref = {
   set(k, v) { try { localStorage.setItem('tmn-' + k, v); } catch { /* ignorar */ } },
 };
 
+/** Tema: 'auto' segue o iPhone; 'claro'/'escuro' forçam. Também ajusta a cor da barra de estado. */
+function applyTheme() {
+  const t = pref.get('tema', 'auto');
+  const root = document.documentElement;
+  if (t === 'claro') root.dataset.theme = 'light';
+  else if (t === 'escuro') root.dataset.theme = 'dark';
+  else delete root.dataset.theme;
+  const metas = document.querySelectorAll('meta[name="theme-color"]');
+  metas.forEach((m) => {
+    const isDarkMeta = m.media.includes('dark');
+    m.content = t === 'auto' ? (isDarkMeta ? '#000000' : '#FAF8F7') : (t === 'escuro' ? '#000000' : '#FAF8F7');
+  });
+}
+
 function toast(msg, isError = false) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -233,9 +247,9 @@ function dashboard(key) {
 
   return `
     <div class="kpis">
+      <div class="kpi wide hero ${vendas - despesas >= 0 ? 'pos' : 'neg'}"><span>Lucro · ${esc(p.label)}</span><b>${eur(vendas - despesas)}</b></div>
       <div class="kpi"><span>Vendas pagas</span><b>${eur(vendas)}</b></div>
       <div class="kpi"><span>Despesas</span><b>${eur(despesas)}</b></div>
-      <div class="kpi wide ${vendas - despesas >= 0 ? 'pos' : 'neg'}"><span>Lucro · ${esc(p.label)}</span><b>${eur(vendas - despesas)}</b></div>
     </div>
 
     <h2 class="section">Para tratar</h2>
@@ -660,6 +674,10 @@ function viewMais() {
           <button class="item" data-href="#/calculadora"><span class="item-main">Calculadora de custo</span><span class="item-right">›</span></button>
           <button class="item" data-href="#/materiais"><span class="item-main">Materiais</span><span class="item-right">›</span></button>
         </div>
+        <h2 class="section">Aspeto</h2>
+        <div class="list"><div class="setting"><span>Tema</span>
+          ${segmented('tema', [['auto', 'Automático'], ['claro', 'Claro'], ['escuro', 'Escuro']], pref.get('tema', 'auto'))}
+        </div></div>
         <div class="list">
           <button class="item" id="atualizar"><span class="item-main">Atualizar dados</span></button>
           <button class="item" id="exportar"><span class="item-main">Exportar cópia de segurança (JSON)</span></button>
@@ -668,6 +686,7 @@ function viewMais() {
         <div class="about"><img src="icons/logo.png" alt="" width="72" height="72"><p>The Macrame Nook<br><small>${db.demo ? 'Modo demonstração' : 'Sessão: ' + esc(currentUser?.email ?? '')}</small></p></div>`,
     }),
     bind(root) {
+      bindSeg(root, 'tema', (v) => { pref.set('tema', v); applyTheme(); });
       root.querySelector('#atualizar').addEventListener('click', async () => { await run(() => db.loadAll(), 'Dados atualizados'); });
       root.querySelector('#exportar').addEventListener('click', () => {
         const blob = new Blob([JSON.stringify(cache, null, 2)], { type: 'application/json' });
