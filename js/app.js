@@ -270,7 +270,38 @@ const routes = [
 
 function go(hash) { location.hash = hash; }
 
-function route() {
+/**
+ * Ao tocar num separador de baixo: mostra logo o ecrã com os dados que já tem e,
+ * em segundo plano, vai buscar os dados mais recentes ao Supabase e redesenha o ecrã
+ * (mantendo a posição do scroll). Não redesenha se entretanto mudou de ecrã ou está a escrever.
+ */
+let refreshing = null;
+function refreshFromTab() {
+  if (refreshing) return refreshing;
+  const hashAntes = location.hash;
+  document.body.classList.add('syncing');
+  refreshing = db.loadAll()
+    .then(() => {
+      const aEscrever = document.activeElement?.matches?.('input, textarea');
+      if (location.hash === hashAntes && !aEscrever && !document.querySelector('.sheet-wrap, .viewer')) {
+        const y = window.scrollY;
+        route({ keepScroll: true });
+        window.scrollTo(0, y);
+      }
+    })
+    .catch((e) => { console.error(e); toast('Sem ligação — a mostrar os últimos dados carregados.', true); })
+    .finally(() => { refreshing = null; document.body.classList.remove('syncing'); });
+  return refreshing;
+}
+$tabs.addEventListener('click', (ev) => {
+  const a = ev.target.closest('a[href]');
+  if (!a) return;
+  // Mesmo separador: não há mudança de endereço, por isso atualiza já. Outro separador: depois de mudar.
+  if (a.getAttribute('href') === location.hash) { ev.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); refreshFromTab(); }
+  else setTimeout(refreshFromTab, 0);
+});
+
+function route({ keepScroll = false } = {}) {
   const hash = location.hash || '#/inicio';
   if (stack.length > 1 && stack[stack.length - 2] === hash) stack.pop();
   else if (stack[stack.length - 1] !== hash) stack.push(hash);
@@ -284,8 +315,7 @@ function route() {
     $tabs.querySelectorAll('a').forEach((a) => a.classList.toggle('on', a.dataset.tab === tab));
     const out = view(m[1], query);
     $view.innerHTML = out.html;
-    $view.scrollTop = 0;
-    window.scrollTo(0, 0);
+    if (!keepScroll) { $view.scrollTop = 0; window.scrollTo(0, 0); }
     bindCommon();
     out.bind?.($view);
     return;
@@ -1306,7 +1336,7 @@ async function start() {
     $view.innerHTML = `<div class="loading"><p>Não foi possível carregar os dados.<br><small>${esc(e.message)}</small></p><button class="btn" onclick="location.reload()">Tentar novamente</button></div>`;
     return;
   }
-  window.addEventListener('hashchange', route);
+  window.addEventListener('hashchange', () => route());
   // Ao voltar à app (ex.: a outra pessoa fez alterações), recarregar os dados se não estiver a editar.
   let hiddenAt = 0;
   document.addEventListener('visibilitychange', async () => {

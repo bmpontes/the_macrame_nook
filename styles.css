@@ -379,3 +379,11 @@ img[data-foto].loaded { opacity: 1; }
 .sheet-body { padding: 4px 16px 16px; overflow-y: auto; }
 .sheet-body .list { margin-bottom: 8px; }
 .sheet-head .link.strong { font-weight: 600; justify-self: end; }
+
+/* ---------- Indicador discreto de atualização (barra fina no topo) ---------- */
+body::before {
+  content: ""; position: fixed; top: env(safe-area-inset-top); left: 0; height: 2px; width: 0;
+  background: var(--accent); z-index: 80; opacity: 0; transition: opacity 0.3s;
+}
+body.syncing::before { opacity: 1; animation: sync 1.2s ease-in-out infinite; }
+@keyframes sync { 0% { left: 0; width: 0; } 50% { left: 20%; width: 60%; } 100% { left: 100%; width: 0; } }
