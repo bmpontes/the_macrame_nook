@@ -1,0 +1,51 @@
+# Despertador do Supabase
+# O plano gratuito do Supabase pausa o projeto ao fim de 7 dias sem atividade.
+# Este workflow faz, todos os dias, um pequeno pedido de leitura à base de dados
+# (com a mesma chave pública que a app usa) para o projeto nunca ficar parado.
+#
+# Também regista uma pequena alteração no repositório no dia 1 de cada mês, porque o
+# GitHub desliga workflows agendados em repositórios sem alterações durante 60 dias.
+#
+# Pode ser executado à mão: GitHub → Actions → "Despertador Supabase" → Run workflow.
+
+name: Despertador Supabase
+
+on:
+  schedule:
+    - cron: '17 6 * * *'   # todos os dias às 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  acordar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Obter os ficheiros da app
+        uses: actions/checkout@v4
+
+      - name: Acordar a base de dados
+        run: |
+          URL=$(grep -oP "SUPABASE_URL = '\K[^']+" config.js)
+          KEY=$(grep -oP "SUPABASE_ANON_KEY = '\K[^']+" config.js)
+          code=$(curl -s -o /tmp/resp.txt -w "%{http_code}" \
+            "$URL/rest/v1/produtos?select=id&limit=1" -H "apikey: $KEY")
+          echo "Resposta do Supabase: HTTP $code"
+          cat /tmp/resp.txt; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::O Supabase não respondeu como esperado (HTTP $code). Pode estar pausado: entre em supabase.com e carregue em Restore project."
+            exit 1
+          fi
+
+      - name: Manter o workflow ativo (dia 1 de cada mês, ou ao correr à mão)
+        run: |
+          if [ "$(date -u +%d)" != "01" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "Hoje não é dia 1 — nada a fazer."; exit 0
+          fi
+          date -u +"%Y-%m-%d %H:%M UTC" > .github/despertador-ultimo.txt
+          git config user.name "despertador"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/despertador-ultimo.txt
+          git commit -m "Despertador: manter o workflow ativo" || exit 0
+          git push
